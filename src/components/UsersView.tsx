@@ -36,7 +36,7 @@ interface UsersViewProps {
     gudangAllocations: GudangAllocations;
     hargaPelanggan: HargaPelanggan;
   };
-  onInviteUser: (email: string, role: 'admin' | 'user') => Promise<void>;
+  onInviteUser: (email: string, role: 'admin' | 'user') => Promise<'created' | 'updated'>;
   onDeleteInvite: (invite: InviteRecord) => Promise<void>;
   onApproveOrUpdateUser: (user: User, role: 'admin' | 'user', status: 'active' | 'pending') => Promise<void>;
   onDeleteUser: (user: User) => void;
@@ -78,12 +78,23 @@ export const UsersView: React.FC<UsersViewProps> = ({
 
     setSubmitting(true);
     try {
-      await onInviteUser(cleanEmail, inviteRole);
+      const result = await onInviteUser(cleanEmail, inviteRole);
       setInviteEmail('');
       setInviteRole('user');
-      onToast(`Akses undangan untuk "${cleanEmail}" berhasil ditambahkan ke database.`);
+      onToast(
+        result === 'updated'
+          ? `Hak akses undangan untuk "${cleanEmail}" berhasil diperbarui ke ${inviteRole.toUpperCase()}.`
+          : `Akses undangan untuk "${cleanEmail}" berhasil ditambahkan ke database.`
+      );
     } catch (err: any) {
-      setError(err?.message || 'Gagal menambahkan undangan pengguna.');
+      let message = err?.message || 'Gagal menambahkan undangan pengguna.';
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed?.error) message = `Gagal menyimpan ke database: ${parsed.error}`;
+      } catch {
+        // Use raw message
+      }
+      setError(message);
     } finally {
       setSubmitting(false);
     }
@@ -114,7 +125,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
           </div>
 
           {error && (
-            <div className="p-3 rounded-lg bg-red-950/60 border border-red-500/40 text-red-300 text-xs">
+            <div className="p-3 rounded-lg bg-red-950/60 border border-red-500/40 text-red-300 text-xs break-words">
               {error}
             </div>
           )}

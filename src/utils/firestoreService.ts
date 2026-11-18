@@ -971,17 +971,24 @@ export async function createInviteInDb(
   email: string,
   role: 'admin' | 'user',
   adminUid: string
-): Promise<void> {
+): Promise<'created' | 'updated'> {
   const cleanEmail = sanitizeString(email.toLowerCase(), 150);
   const inviteId = emailToDocId(cleanEmail);
   const path = `invites/${inviteId}`;
+  const inviteRef = doc(db, 'invites', inviteId);
   try {
-    await setDoc(doc(db, 'invites', inviteId), {
+    const existingSnap = await getDoc(inviteRef);
+    if (existingSnap.exists()) {
+      await updateDoc(inviteRef, { role });
+      return 'updated';
+    }
+    await setDoc(inviteRef, {
       email: cleanEmail,
       role,
       createdBy: adminUid,
       createdAt: serverTimestamp(),
     });
+    return 'created';
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Boxes, AlertCircle, Clock, LogOut, Cloud, Loader2 } from 'lucide-react';
+import { Boxes, AlertCircle, Clock, LogOut, Cloud, Loader2, Copy, Check } from 'lucide-react';
 
 interface LoginOverlayProps {
   pendingUser: User | null;
@@ -16,10 +16,24 @@ export const LoginOverlay: React.FC<LoginOverlayProps> = ({
   onLogout,
 }) => {
   const [errorMsg, setErrorMsg] = useState('');
+  const [unauthorizedHost, setUnauthorizedHost] = useState('');
+  const [copiedHost, setCopiedHost] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+
+  const handleCopyHost = async () => {
+    if (!unauthorizedHost) return;
+    try {
+      await navigator.clipboard.writeText(unauthorizedHost);
+      setCopiedHost(true);
+      setTimeout(() => setCopiedHost(false), 2000);
+    } catch {
+      // ignore clipboard failures
+    }
+  };
 
   const handleSignIn = async () => {
     setErrorMsg('');
+    setUnauthorizedHost('');
     setSigningIn(true);
     try {
       await onGoogleLogin();
@@ -29,6 +43,9 @@ export const LoginOverlay: React.FC<LoginOverlayProps> = ({
         setErrorMsg('Popup login Google ditutup sebelum proses selesai.');
       } else if (code === 'auth/popup-blocked') {
         setErrorMsg('Popup diblokir browser. Izinkan popup untuk situs ini lalu coba lagi.');
+      } else if (code === 'auth/unauthorized-domain' || String(err?.message || '').includes('unauthorized-domain')) {
+        setUnauthorizedHost(window.location.hostname);
+        setErrorMsg('Domain aplikasi ini belum terdaftar di Authorized Domains Firebase Authentication.');
       } else {
         setErrorMsg(err?.message || 'Gagal masuk dengan akun Google. Silakan coba lagi.');
       }
@@ -93,9 +110,37 @@ export const LoginOverlay: React.FC<LoginOverlayProps> = ({
             </p>
 
             {errorMsg && (
-              <div className="mt-4 p-3 rounded-lg bg-red-950/60 border border-red-500/50 text-red-300 text-xs flex items-center gap-2 text-left">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                <span>{errorMsg}</span>
+              <div className="mt-4 p-3.5 rounded-xl bg-red-950/60 border border-red-500/50 text-red-200 text-xs space-y-2 text-left">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+                  <span>{errorMsg}</span>
+                </div>
+                {unauthorizedHost && (
+                  <div className="pt-2 border-t border-red-500/30 space-y-2">
+                    <p className="text-[11px] text-slate-300">
+                      Salin domain berikut lalu tambahkan di{' '}
+                      <strong className="text-white">
+                        Firebase Console &rarr; Authentication &rarr; Settings &rarr; Authorized domains
+                      </strong>
+                      :
+                    </p>
+                    <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700 font-mono text-[11px] text-amber-300">
+                      <span className="truncate">{unauthorizedHost}</span>
+                      <button
+                        type="button"
+                        onClick={handleCopyHost}
+                        className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white shrink-0"
+                        title="Salin domain"
+                      >
+                        {copiedHost ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

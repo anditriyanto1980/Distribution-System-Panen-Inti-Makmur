@@ -428,8 +428,8 @@ export default function App() {
 
   // User & Invite Management Handlers
   const handleInviteUser = async (email: string, role: 'admin' | 'user') => {
-    if (!currentUser) return;
-    await createInviteInDb(email, role, currentUser.uid);
+    if (!currentUser) return 'created' as const;
+    return await createInviteInDb(email, role, currentUser.uid);
   };
 
   const handleDeleteInvite = async (invite: InviteRecord) => {

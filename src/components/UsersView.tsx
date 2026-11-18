@@ -1,6 +1,16 @@
-import React, { useState, useRef } from 'react';
-import { User } from '../types';
-import { downloadBackupJson, restoreBackupJson } from '../utils/storage';
+import React, { useState } from 'react';
+import {
+  User,
+  InviteRecord,
+  Product,
+  StockEntry,
+  SaleRecord,
+  ForecastData,
+  DcToGdMap,
+  GudangAllocations,
+  HargaPelanggan,
+} from '../types';
+import { downloadFirestoreBackupJson } from '../utils/firestoreService';
 import {
   Users as UsersIcon,
   UserPlus,
@@ -9,12 +19,26 @@ import {
   Database,
   Download,
   Upload,
+  CheckCircle,
+  Mail,
 } from 'lucide-react';
 
 interface UsersViewProps {
   users: User[];
+  invites: InviteRecord[];
   currentUser: User | null;
-  onAddUser: (user: { username: string; password?: string; role: 'admin' | 'user' }) => void;
+  backupState: {
+    products: Product[];
+    stockEntries: StockEntry[];
+    salesData: SaleRecord[];
+    forecastData: ForecastData;
+    dcToGdMap: DcToGdMap;
+    gudangAllocations: GudangAllocations;
+    hargaPelanggan: HargaPelanggan;
+  };
+  onInviteUser: (email: string, role: 'admin' | 'user') => Promise<void>;
+  onDeleteInvite: (invite: InviteRecord) => Promise<void>;
+  onApproveOrUpdateUser: (user: User, role: 'admin' | 'user', status: 'active' | 'pending') => Promise<void>;
   onDeleteUser: (user: User) => void;
   onRequestRestore: () => void;
   onToast: (msg: string, isError?: boolean) => void;
@@ -22,102 +46,95 @@ interface UsersViewProps {
 
 export const UsersView: React.FC<UsersViewProps> = ({
   users,
+  invites,
   currentUser,
-  onAddUser,
+  backupState,
+  onInviteUser,
+  onDeleteInvite,
+  onApproveOrUpdateUser,
   onDeleteUser,
   onRequestRestore,
   onToast,
 }) => {
-  const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [newRole, setNewRole] = useState<'admin' | 'user'>('user');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'user'>('user');
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    const trimmedUser = newUsername.trim();
-    if (!trimmedUser || !newPassword) {
-      setError('Username dan Password wajib diisi.');
+    const cleanEmail = inviteEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setError('Masukkan alamat email Google yang valid.');
       return;
     }
 
-    if (users.some((u) => u.username.toLowerCase() === trimmedUser.toLowerCase())) {
-      setError(`Username "${trimmedUser}" sudah digunakan.`);
+    if (users.some((u) => u.email.toLowerCase() === cleanEmail && u.status === 'active')) {
+      setError(`Pengguna dengan email "${cleanEmail}" sudah terdaftar aktif.`);
       return;
     }
 
-    onAddUser({
-      username: trimmedUser,
-      password: newPassword,
-      role: newRole,
-    });
-
-    setNewUsername('');
-    setNewPassword('');
-    setNewRole('user');
-    onToast(`Pengguna baru "${trimmedUser}" berhasil ditambahkan.`);
+    setSubmitting(true);
+    try {
+      await onInviteUser(cleanEmail, inviteRole);
+      setInviteEmail('');
+      setInviteRole('user');
+      onToast(`Akses undangan untuk "${cleanEmail}" berhasil ditambahkan ke database.`);
+    } catch (err: any) {
+      setError(err?.message || 'Gagal menambahkan undangan pengguna.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleBackup = () => {
-    downloadBackupJson();
-    onToast('File cadangan (backup JSON) berhasil diunduh!');
+    downloadFirestoreBackupJson(backupState);
+    onToast('File cadangan database Firebase (.json) berhasil diunduh!');
   };
 
   return (
-    <div className="space-y-10 max-w-4xl mx-auto">
-      {/* Title */}
+    <div className="space-y-10 max-w-5xl mx-auto">
       <div className="text-center">
         <h2 className="text-xl font-bold text-white tracking-wide">
-          Pengaturan Pengguna & Cadangan Sistem
+          Pengaturan Pengguna &amp; Cadangan Database Firebase
         </h2>
         <p className="text-xs text-slate-400 mt-1">
-          Kelola hak akses operator, peran sistem, dan backup berkala seluruh basis data
+          Undang email Google staf gudang agar bisa mengakses data real-time dari perangkat mana saja
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-        {/* Form Tambah Pengguna */}
-        <div className="glass-panel p-5 rounded-2xl border border-amber-500/20 shadow-xl">
-          <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-800">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Form Tambah / Undang Email Staf */}
+        <div className="glass-panel p-5 rounded-2xl border border-amber-500/20 shadow-xl space-y-5">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-800">
             <UserPlus className="w-4 h-4 text-amber-400" />
-            <h3 className="font-bold text-sm text-white">Tambah Pengguna Baru</h3>
+            <h3 className="font-bold text-sm text-white">Undang / Otorisasi Email Google Staf</h3>
           </div>
 
           {error && (
-            <div className="mb-4 p-3 rounded-lg bg-red-950/60 border border-red-500/40 text-red-300 text-xs">
+            <div className="p-3 rounded-lg bg-red-950/60 border border-red-500/40 text-red-300 text-xs">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleInviteSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Username Baru
+                Email Akun Google Staf
               </label>
-              <input
-                type="text"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-sm focus:border-amber-400 focus:outline-none"
-                placeholder="misal: ahmad_gudang"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Password Baru
-              </label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-sm focus:border-amber-400 focus:outline-none"
-                placeholder="******"
-              />
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  required
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-sm focus:border-amber-400 focus:outline-none"
+                  placeholder="contoh: gudang.surabaya@gmail.com"
+                />
+              </div>
             </div>
 
             <div>
@@ -125,73 +142,143 @@ export const UsersView: React.FC<UsersViewProps> = ({
                 Hak Akses (Peran)
               </label>
               <select
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value as 'admin' | 'user')}
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as 'admin' | 'user')}
                 className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-slate-200 text-sm focus:border-amber-400 focus:outline-none"
               >
-                <option value="user">User (Staff Operasional)</option>
-                <option value="admin">Admin (Akses Penuh)</option>
+                <option value="user">User (Staf Gudang / Catat Pengiriman)</option>
+                <option value="admin">Admin (Akses Penuh Master &amp; Harga)</option>
               </select>
             </div>
 
             <button
               type="submit"
-              className="w-full py-2.5 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 transition flex items-center justify-center gap-1.5"
+              disabled={submitting}
+              className="w-full py-2.5 px-4 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-bold text-xs shadow-md shadow-amber-500/20 transition flex items-center justify-center gap-1.5"
             >
               <UserPlus className="w-4 h-4" />
-              <span>Daftarkan Pengguna</span>
+              <span>{submitting ? 'Menyimpan...' : 'Otorisasi Email Ini'}</span>
             </button>
           </form>
+
+          {/* Pending Invites List */}
+          {invites.length > 0 && (
+            <div className="pt-4 border-t border-slate-800 space-y-2">
+              <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                Undangan Aktif ({invites.length})
+              </h4>
+              <div className="space-y-2">
+                {invites.map((inv) => (
+                  <div
+                    key={inv.id}
+                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-800 text-xs"
+                  >
+                    <div>
+                      <p className="text-slate-200 font-medium">{inv.email}</p>
+                      <p className="text-[11px] text-amber-400 capitalize">Peran: {inv.role}</p>
+                    </div>
+                    <button
+                      onClick={() => onDeleteInvite(inv)}
+                      className="p-1.5 rounded text-red-400 hover:bg-slate-800 transition"
+                      title="Batalkan Undangan"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Daftar Pengguna */}
+        {/* Daftar Pengguna Terdaftar */}
         <div className="glass-panel p-5 rounded-2xl border border-amber-500/20 shadow-xl">
           <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-800">
             <UsersIcon className="w-4 h-4 text-amber-400" />
-            <h3 className="font-bold text-sm text-white">Daftar Pengguna Aktif</h3>
+            <h3 className="font-bold text-sm text-white">Daftar Pengguna Terdaftar</h3>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-slate-800">
+          <div className="overflow-x-auto rounded-xl border border-slate-800">
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
                 <tr>
-                  <th className="px-4 py-2.5">Username</th>
-                  <th className="px-4 py-2.5">Peran</th>
-                  <th className="px-4 py-2.5 text-center">Aksi</th>
+                  <th className="px-4 py-2.5">Pengguna</th>
+                  <th className="px-3 py-2.5">Peran</th>
+                  <th className="px-3 py-2.5">Status</th>
+                  <th className="px-3 py-2.5 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-medium">
                 {users.map((u) => {
-                  const isCurrent = currentUser?.username === u.username;
+                  const isCurrent = currentUser?.uid === u.uid;
                   return (
-                    <tr key={u.id} className="hover:bg-slate-800/40">
-                      <td className="px-4 py-3 text-white font-semibold flex items-center gap-2">
-                        <span>{u.username}</span>
-                        {isCurrent && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                            Anda
+                    <tr key={u.uid} className="hover:bg-slate-800/40">
+                      <td className="px-4 py-3">
+                        <div className="text-white font-semibold flex items-center gap-2">
+                          <span>{u.displayName}</span>
+                          {isCurrent && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              Anda
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-400">{u.email}</div>
+                      </td>
+
+                      <td className="px-3 py-3">
+                        {!isCurrent ? (
+                          <select
+                            value={u.role}
+                            onChange={(e) =>
+                              onApproveOrUpdateUser(
+                                u,
+                                e.target.value as 'admin' | 'user',
+                                u.status
+                              )
+                            }
+                            className="px-2 py-1 rounded bg-slate-900 border border-slate-700 text-xs text-slate-200 focus:border-amber-400 focus:outline-none"
+                          >
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-400">
+                            <Shield className="w-3 h-3" />
+                            <span>Admin</span>
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+
+                      <td className="px-3 py-3">
                         <span
-                          className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
-                            u.role === 'admin' ? 'text-amber-400' : 'text-sky-400'
+                          className={`text-[11px] font-semibold ${
+                            u.status === 'active' ? 'text-emerald-400' : 'text-amber-400'
                           }`}
                         >
-                          <Shield className="w-3 h-3" />
-                          <span className="capitalize">{u.role}</span>
+                          {u.status === 'active' ? 'Aktif' : 'Menunggu'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        {!isCurrent && users.length > 1 ? (
-                          <button
-                            onClick={() => onDeleteUser(u)}
-                            className="p-1 rounded text-red-400 hover:bg-slate-800 transition"
-                            title="Hapus Pengguna"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+
+                      <td className="px-3 py-3 text-center">
+                        {!isCurrent ? (
+                          <div className="flex items-center justify-center gap-1.5">
+                            {u.status === 'pending' && (
+                              <button
+                                onClick={() => onApproveOrUpdateUser(u, u.role, 'active')}
+                                className="p-1.5 rounded text-emerald-400 hover:bg-slate-800 transition"
+                                title="Setujui Akses"
+                              >
+                                <CheckCircle className="w-4 h-4" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => onDeleteUser(u)}
+                              className="p-1.5 rounded text-red-400 hover:bg-slate-800 transition"
+                              title="Hapus Pengguna"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-slate-600 text-xs">-</span>
                         )}
@@ -205,16 +292,15 @@ export const UsersView: React.FC<UsersViewProps> = ({
         </div>
       </div>
 
-      {/* Cadangkan & Pulihkan Data Section */}
+      {/* Cadangkan & Pulihkan Data Cloud */}
       <div className="glass-panel p-6 rounded-2xl border border-amber-500/20 text-center">
         <div className="inline-flex p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mb-3">
           <Database className="w-6 h-6" />
         </div>
-        <h3 className="text-base font-bold text-white">Cadangkan & Pulihkan Data</h3>
+        <h3 className="text-base font-bold text-white">Cadangkan &amp; Pulihkan Database Cloud</h3>
         <p className="text-xs text-slate-400 max-w-lg mx-auto mt-1 mb-6">
-          Simpan seluruh data sistem (master barang, mutasi stok masuk, riwayat pengiriman,
-          forecast, alokasi gudang, dan tarif harga) ke file cadangan tunggal (.json), atau
-          pulihkan kapan saja.
+          Unduh salinan seluruh data dari Firebase Firestore ke file tunggal (.json), atau pulihkan
+          data cadangan langsung ke database cloud.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -231,7 +317,7 @@ export const UsersView: React.FC<UsersViewProps> = ({
             className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-red-600/90 hover:bg-red-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition"
           >
             <Upload className="w-4 h-4" />
-            <span>Pulihkan (Restore) Semua Data</span>
+            <span>Pulihkan (Restore) ke Firebase</span>
           </button>
         </div>
       </div>

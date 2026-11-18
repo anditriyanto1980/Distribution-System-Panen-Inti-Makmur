@@ -77,8 +77,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <UserCheck className="w-4 h-4 text-sky-400" />
                 )}
                 <div className="text-xs text-left">
-                  <p className="font-semibold text-slate-200 capitalize">{currentUser.username}</p>
-                  <p className="text-[10px] text-slate-400 uppercase tracking-wider">{currentUser.role}</p>
+                  <p className="font-semibold text-slate-200 max-w-[140px] truncate">
+                    {currentUser.displayName || currentUser.email}
+                  </p>
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wider">
+                    {currentUser.role} · Cloud Sync
+                  </p>
                 </div>
               </div>
             )}

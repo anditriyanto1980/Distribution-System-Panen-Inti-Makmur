@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { auth, googleProvider } from './firebase';
 import {
   Product,
   StockEntry,
   SaleRecord,
   User,
+  InviteRecord,
   ForecastData,
   DcToGdMap,
   GudangAllocations,
@@ -11,11 +14,36 @@ import {
   ActiveTab,
 } from './types';
 import {
-  loadStoredData,
-  persistAllData,
-  restoreBackupJson,
-  STORAGE_KEYS,
-} from './utils/storage';
+  syncUserOnSignIn,
+  seedInitialWorkspaceDataIfNeeded,
+  subscribeProducts,
+  subscribeStockEntries,
+  subscribeSales,
+  subscribeForecastConfig,
+  subscribeAllocationConfig,
+  subscribePricesConfig,
+  subscribeUsers,
+  subscribeInvites,
+  subscribeCurrentUserStatus,
+  createProductInDb,
+  updateProductInDb,
+  deleteProductCascadeInDb,
+  createStockEntriesInDb,
+  updateStockEntryInDb,
+  deleteStockEntryInDb,
+  createSaleInDb,
+  updateSaleInDb,
+  deleteSaleInDb,
+  importSalesBatchInDb,
+  saveForecastConfigInDb,
+  saveAllocationConfigInDb,
+  savePricesConfigInDb,
+  createInviteInDb,
+  deleteInviteInDb,
+  approveOrUpdateUserInDb,
+  deleteUserAndMemberInDb,
+  restoreBackupToFirestore,
+} from './utils/firestoreService';
 import { Navbar } from './components/Navbar';
 import { LoginOverlay } from './components/LoginOverlay';
 import { DashboardView } from './components/DashboardView';
@@ -29,23 +57,25 @@ import { ProductModal } from './components/modals/ProductModal';
 import { StockEntryModal } from './components/modals/StockEntryModal';
 import { SaleModal } from './components/modals/SaleModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
-import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 export default function App() {
-  // Master data states
+  // Real-time Firestore data states (Zero browser storage)
   const [products, setProducts] = useState<Product[]>([]);
   const [stockEntries, setStockEntries] = useState<StockEntry[]>([]);
   const [salesData, setSalesData] = useState<SaleRecord[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [forecastData, setForecastData] = useState<ForecastData>({});
   const [dcToGdMap, setDcToGdMap] = useState<DcToGdMap>({});
   const [gudangAllocations, setGudangAllocations] = useState<GudangAllocations>({});
   const [hargaPelanggan, setHargaPelanggan] = useState<HargaPelanggan>({});
 
-  // App Session states
+  // Auth & loading states
+  const [authLoading, setAuthLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
-  const [isInitialized, setIsInitialized] = useState(false);
 
   // Modal states
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -84,110 +114,169 @@ export default function App() {
 
   const restoreFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize data on mount
-  useEffect(() => {
-    const data = loadStoredData();
-    setProducts(data.products);
-    setStockEntries(data.stockEntries);
-    setSalesData(data.salesData);
-    setUsers(data.users);
-    setForecastData(data.forecastData);
-    setDcToGdMap(data.dcToGdMap);
-    setGudangAllocations(data.gudangAllocations);
-    setHargaPelanggan(data.hargaPelanggan);
-
-    // Check stored user session
-    const savedUserJson = sessionStorage.getItem(STORAGE_KEYS.currentUser);
-    if (savedUserJson) {
-      try {
-        const parsedUser = JSON.parse(savedUserJson);
-        setCurrentUser(parsedUser);
-      } catch {
-        setCurrentUser(null);
-      }
-    } else {
-      // By default show login overlay, or if admin exists auto-suggest
-      setCurrentUser(null);
-    }
-
-    setIsInitialized(true);
-  }, []);
-
-  // Save changes to localStorage whenever master data updates
-  useEffect(() => {
-    if (!isInitialized) return;
-    persistAllData({
-      products,
-      stockEntries,
-      salesData,
-      users,
-      forecastData,
-      dcToGdMap,
-      gudangAllocations,
-      hargaPelanggan,
-    });
-  }, [
-    products,
-    stockEntries,
-    salesData,
-    users,
-    forecastData,
-    dcToGdMap,
-    gudangAllocations,
-    hargaPelanggan,
-    isInitialized,
-  ]);
-
   const showToast = (message: string, isError = false) => {
     setToast({ visible: true, message, isError });
     setTimeout(() => {
       setToast((prev) => ({ ...prev, visible: false }));
-    }, 3200);
+    }, 3500);
   };
 
-  // Auth Handlers
-  const handleLogin = (user: User) => {
-    setCurrentUser(user);
-    sessionStorage.setItem(STORAGE_KEYS.currentUser, JSON.stringify(user));
-    showToast(`Selamat datang, ${user.username}!`);
+  // 1. Firebase Auth state listener
+  useEffect(() => {
+    let statusUnsub: (() => void) | null = null;
+
+    const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
+      if (statusUnsub) {
+        statusUnsub();
+        statusUnsub = null;
+      }
+
+      if (!fbUser) {
+        setCurrentUser(null);
+        setProducts([]);
+        setStockEntries([]);
+        setSalesData([]);
+        setUsers([]);
+        setInvites([]);
+        setForecastData({});
+        setDcToGdMap({});
+        setGudangAllocations({});
+        setHargaPelanggan({});
+        setAuthLoading(false);
+        return;
+      }
+
+      setAuthLoading(true);
+      try {
+        const syncedUser = await syncUserOnSignIn(fbUser);
+        setCurrentUser(syncedUser);
+
+        if (syncedUser.status === 'active' && syncedUser.role === 'admin') {
+          await seedInitialWorkspaceDataIfNeeded(syncedUser.uid);
+        }
+
+        // Listen to live user status/role updates (for instant approval/revocation)
+        statusUnsub = subscribeCurrentUserStatus(fbUser.uid, (updatedUser) => {
+          if (updatedUser) {
+            setCurrentUser(updatedUser);
+          }
+        });
+      } catch (err: any) {
+        showToast(err?.message || 'Gagal sinkronisasi profil pengguna.', true);
+      } finally {
+        setAuthLoading(false);
+      }
+    });
+
+    return () => {
+      unsubAuth();
+      if (statusUnsub) statusUnsub();
+    };
+  }, []);
+
+  // 2. Real-time Firestore subscriptions (only when user is active & authenticated)
+  useEffect(() => {
+    if (!currentUser || currentUser.status !== 'active') return;
+
+    setDataLoading(true);
+    let initialLoaded = 0;
+    const markLoaded = () => {
+      initialLoaded++;
+      if (initialLoaded >= 3) {
+        setDataLoading(false);
+      }
+    };
+
+    const unsubProducts = subscribeProducts((items) => {
+      setProducts(items);
+      markLoaded();
+    });
+
+    const unsubEntries = subscribeStockEntries((entries) => {
+      setStockEntries(entries);
+      markLoaded();
+    });
+
+    const unsubSales = subscribeSales((sales) => {
+      setSalesData(sales);
+      markLoaded();
+    });
+
+    const unsubForecast = subscribeForecastConfig((forecast, map) => {
+      setForecastData(forecast);
+      setDcToGdMap(map);
+    });
+
+    const unsubAllocation = subscribeAllocationConfig((alloc) => {
+      setGudangAllocations(alloc);
+    });
+
+    const unsubPrices = subscribePricesConfig((prices) => {
+      setHargaPelanggan(prices);
+    });
+
+    let unsubUsers: (() => void) | null = null;
+    let unsubInvites: (() => void) | null = null;
+
+    if (currentUser.role === 'admin') {
+      unsubUsers = subscribeUsers(setUsers);
+      unsubInvites = subscribeInvites(setInvites);
+    }
+
+    return () => {
+      unsubProducts();
+      unsubEntries();
+      unsubSales();
+      unsubForecast();
+      unsubAllocation();
+      unsubPrices();
+      if (unsubUsers) unsubUsers();
+      if (unsubInvites) unsubInvites();
+    };
+  }, [currentUser?.uid, currentUser?.status, currentUser?.role]);
+
+  // Auth Actions
+  const handleGoogleLogin = async () => {
+    await signInWithPopup(auth, googleProvider);
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    sessionStorage.removeItem(STORAGE_KEYS.currentUser);
+  const handleLogout = async () => {
+    await signOut(auth);
     setActiveTab('dashboard');
     showToast('Anda telah keluar dari sistem.');
   };
 
   // Product Master Handlers
-  const handleSaveProduct = (prodData: {
+  const handleSaveProduct = async (prodData: {
     id?: string;
     code: string;
     name: string;
     unit: string;
     harga: number;
   }) => {
-    if (prodData.id) {
-      // Edit
-      setProducts((prev) =>
-        prev.map((p) =>
-          p.id === prodData.id
-            ? { ...p, unit: prodData.unit, harga: prodData.harga }
-            : p
-        )
-      );
-      showToast(`Produk "${prodData.name}" berhasil diperbarui.`);
-    } else {
-      // Add
-      const newProd: Product = {
-        id: `prod-${Date.now()}`,
-        code: prodData.code,
-        name: prodData.name,
-        unit: prodData.unit,
-        harga: prodData.harga,
-      };
-      setProducts((prev) => [...prev, newProd]);
-      showToast(`Produk baru "${prodData.name}" (${prodData.code}) berhasil ditambahkan.`);
+    if (!currentUser) return;
+    try {
+      if (prodData.id) {
+        await updateProductInDb(prodData.id, {
+          name: prodData.name,
+          unit: prodData.unit,
+          harga: prodData.harga,
+        });
+        showToast(`Produk "${prodData.name}" berhasil diperbarui di database.`);
+      } else {
+        await createProductInDb(
+          {
+            code: prodData.code,
+            name: prodData.name,
+            unit: prodData.unit,
+            harga: prodData.harga,
+          },
+          currentUser.uid
+        );
+        showToast(`Produk baru "${prodData.name}" (${prodData.code}) tersimpan real-time.`);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan produk.', true);
     }
   };
 
@@ -195,40 +284,44 @@ export default function App() {
     setConfirmModalState({
       isOpen: true,
       title: 'Hapus Master Produk',
-      message: `Apakah Anda yakin ingin menghapus produk "${p.name}" (${p.code})? Semua riwayat penerimaan stok dan pengiriman terkait produk ini akan ikut dibersihkan.`,
+      message: `Apakah Anda yakin ingin menghapus produk "${p.name}" (${p.code})? Semua riwayat penerimaan stok dan pengiriman terkait produk ini akan dihapus permanen dari database.`,
       confirmLabel: 'Hapus Produk',
       isDestructive: true,
-      onConfirm: () => {
-        setProducts((prev) => prev.filter((item) => item.id !== p.id));
-        setStockEntries((prev) => prev.filter((entry) => entry.itemCode !== p.code));
-        setSalesData((prev) => prev.filter((sale) => sale.itemCode !== p.code));
+      onConfirm: async () => {
         setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
-        showToast(`Produk "${p.name}" telah dihapus.`);
+        try {
+          await deleteProductCascadeInDb(p, stockEntries, salesData);
+          showToast(`Produk "${p.name}" telah dihapus dari database.`);
+        } catch (err: any) {
+          showToast(err?.message || 'Gagal menghapus produk.', true);
+        }
       },
     });
   };
 
   // Stock Entry Handlers
-  const handleSaveNewStockEntries = (
+  const handleSaveNewStockEntries = async (
     entries: { date: string; itemCode: string; warehouse: string; quantity: number }[]
   ) => {
-    const newItems: StockEntry[] = entries.map((e, idx) => ({
-      id: `entry-${Date.now()}-${idx}`,
-      ...e,
-    }));
-    setStockEntries((prev) => [...newItems, ...prev]);
-    showToast(`${entries.length} penerimaan stok berhasil dicatat.`);
+    if (!currentUser) return;
+    try {
+      await createStockEntriesInDb(entries, currentUser.uid);
+      showToast(`${entries.length} penerimaan stok tersimpan real-time ke Firebase.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan stok masuk.', true);
+    }
   };
 
-  const handleUpdateStockEntry = (id: string, date: string, quantity: number) => {
-    if (quantity <= 0) {
-      setStockEntries((prev) => prev.filter((e) => e.id !== id));
-      showToast('Entri stok dihapus karena jumlah diubah menjadi 0.');
-    } else {
-      setStockEntries((prev) =>
-        prev.map((e) => (e.id === id ? { ...e, date, quantity } : e))
+  const handleUpdateStockEntry = async (id: string, date: string, quantity: number) => {
+    try {
+      await updateStockEntryInDb(id, date, quantity);
+      showToast(
+        quantity <= 0
+          ? 'Entri stok dihapus karena jumlah diubah menjadi 0.'
+          : 'Entri stok berhasil diperbarui di database.'
       );
-      showToast('Entri stok berhasil diperbarui.');
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memperbarui stok masuk.', true);
     }
   };
 
@@ -239,30 +332,32 @@ export default function App() {
       message: `Apakah Anda yakin ingin menghapus riwayat penerimaan ${entry.quantity} unit ke ${entry.warehouse}?`,
       confirmLabel: 'Hapus Entri',
       isDestructive: true,
-      onConfirm: () => {
-        setStockEntries((prev) => prev.filter((e) => e.id !== entry.id));
+      onConfirm: async () => {
         setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
-        showToast('Entri stok berhasil dihapus.');
+        try {
+          await deleteStockEntryInDb(entry.id);
+          showToast('Entri stok berhasil dihapus dari database.');
+        } catch (err: any) {
+          showToast(err?.message || 'Gagal menghapus entri stok.', true);
+        }
       },
     });
   };
 
   // Sale / Shipment Handlers
-  const handleSaveSale = (saleData: Omit<SaleRecord, 'id'> & { id?: string }) => {
-    if (saleData.id) {
-      // Edit
-      setSalesData((prev) =>
-        prev.map((s) => (s.id === saleData.id ? { ...s, ...saleData, id: saleData.id! } : s))
-      );
-      showToast('Data pengiriman berhasil diperbarui.');
-    } else {
-      // Add
-      const newSale: SaleRecord = {
-        id: `sale-${Date.now()}`,
-        ...saleData,
-      };
-      setSalesData((prev) => [newSale, ...prev]);
-      showToast('Pengiriman baru berhasil dicatat!');
+  const handleSaveSale = async (saleData: Omit<SaleRecord, 'id'> & { id?: string }) => {
+    if (!currentUser) return;
+    try {
+      if (saleData.id) {
+        const { id, ...rest } = saleData;
+        await updateSaleInDb(id, rest);
+        showToast('Data pengiriman berhasil diperbarui di database.');
+      } else {
+        await createSaleInDb(saleData, currentUser.uid);
+        showToast('Pengiriman baru tersimpan real-time ke Firebase!');
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan data pengiriman.', true);
     }
   };
 
@@ -273,76 +368,118 @@ export default function App() {
       message: `Apakah Anda yakin ingin menghapus catatan pengiriman ${sale.itemCode} ke ${sale.namaPelanggan}?`,
       confirmLabel: 'Hapus Pengiriman',
       isDestructive: true,
-      onConfirm: () => {
-        setSalesData((prev) => prev.filter((s) => s.id !== sale.id));
+      onConfirm: async () => {
         setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
-        showToast('Data pengiriman telah dihapus.');
+        try {
+          await deleteSaleInDb(sale.id);
+          showToast('Data pengiriman telah dihapus dari database.');
+        } catch (err: any) {
+          showToast(err?.message || 'Gagal menghapus data pengiriman.', true);
+        }
       },
     });
   };
 
-  const handleSalesImported = (
-    updatedSales: SaleRecord[],
+  const handleSalesImported = async (
+    addedItems: SaleRecord[],
     added: number,
     skipped: number
   ) => {
-    setSalesData(updatedSales);
-    let msg = `${added} data pengiriman berhasil diimpor.`;
-    if (skipped > 0) msg += ` (${skipped} baris dilewati karena format tidak sesuai)`;
-    showToast(msg, added === 0 && skipped > 0);
+    if (!currentUser) return;
+    try {
+      if (addedItems.length > 0) {
+        await importSalesBatchInDb(addedItems, currentUser.uid);
+      }
+      let msg = `${added} data pengiriman berhasil diimpor ke database Firebase.`;
+      if (skipped > 0) msg += ` (${skipped} baris dilewati karena format tidak sesuai)`;
+      showToast(msg, added === 0 && skipped > 0);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal mengimpor data ke database.', true);
+    }
   };
 
-  // Forecast & Allocations Handlers
-  const handleSaveForecast = (newForecast: ForecastData, newDcToGd: DcToGdMap) => {
-    setForecastData(newForecast);
-    setDcToGdMap(newDcToGd);
+  // Forecast, Allocations & Prices Handlers
+  const handleSaveForecast = async (newForecast: ForecastData, newDcToGd: DcToGdMap) => {
+    if (!currentUser) return;
+    try {
+      await saveForecastConfigInDb(newForecast, newDcToGd, currentUser.uid);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan forecast.', true);
+    }
   };
 
-  const handleSaveAllocations = (newAllocations: GudangAllocations) => {
-    setGudangAllocations(newAllocations);
+  const handleSaveAllocations = async (newAllocations: GudangAllocations) => {
+    if (!currentUser) return;
+    try {
+      await saveAllocationConfigInDb(newAllocations, currentUser.uid);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan alokasi.', true);
+    }
   };
 
-  const handleSavePrices = (newPrices: HargaPelanggan) => {
-    setHargaPelanggan(newPrices);
+  const handleSavePrices = async (newPrices: HargaPelanggan) => {
+    if (!currentUser) return;
+    try {
+      await savePricesConfigInDb(newPrices, currentUser.uid);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal menyimpan harga pelanggan.', true);
+    }
   };
 
-  // User Handlers
-  const handleAddUser = (newU: {
-    username: string;
-    password?: string;
-    role: 'admin' | 'user';
-  }) => {
-    const created: User = {
-      id: `user-${Date.now()}`,
-      username: newU.username,
-      password: newU.password,
-      role: newU.role,
-    };
-    setUsers((prev) => [...prev, created]);
+  // User & Invite Management Handlers
+  const handleInviteUser = async (email: string, role: 'admin' | 'user') => {
+    if (!currentUser) return;
+    await createInviteInDb(email, role, currentUser.uid);
+  };
+
+  const handleDeleteInvite = async (invite: InviteRecord) => {
+    try {
+      await deleteInviteInDb(invite.id);
+      showToast(`Undangan untuk "${invite.email}" dibatalkan.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal membatalkan undangan.', true);
+    }
+  };
+
+  const handleApproveOrUpdateUser = async (
+    u: User,
+    role: 'admin' | 'user',
+    status: 'active' | 'pending'
+  ) => {
+    try {
+      await approveOrUpdateUserInDb(u.uid, role, status);
+      showToast(`Akses untuk "${u.displayName}" diperbarui (${role}, ${status}).`);
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memperbarui peran pengguna.', true);
+    }
   };
 
   const handleDeleteUser = (u: User) => {
     setConfirmModalState({
       isOpen: true,
       title: 'Hapus Pengguna',
-      message: `Apakah Anda yakin ingin menghapus akun pengguna "${u.username}"?`,
+      message: `Apakah Anda yakin ingin mencabut akses & menghapus pengguna "${u.displayName}" (${u.email})?`,
       confirmLabel: 'Hapus Pengguna',
       isDestructive: true,
-      onConfirm: () => {
-        setUsers((prev) => prev.filter((user) => user.id !== u.id));
+      onConfirm: async () => {
         setConfirmModalState((prev) => ({ ...prev, isOpen: false }));
-        showToast(`Pengguna "${u.username}" telah dihapus.`);
+        try {
+          await deleteUserAndMemberInDb(u.uid);
+          showToast(`Pengguna "${u.displayName}" telah dihapus.`);
+        } catch (err: any) {
+          showToast(err?.message || 'Gagal menghapus pengguna.', true);
+        }
       },
     });
   };
 
-  // Restore Handlers
+  // Cloud Restore Handlers
   const handleRequestRestore = () => {
     setConfirmModalState({
       isOpen: true,
-      title: 'Pulihkan (Restore) Seluruh Data',
+      title: 'Pulihkan (Restore) ke Database Firebase',
       message:
-        'PERINGATAN: Memulihkan data dari file JSON cadangan akan MENIMPA seluruh stok, transaksi pengiriman, forecast, dan akun saat ini. Pastikan Anda telah membuat cadangan terbaru. Lanjutkan?',
+        'PERINGATAN: Memulihkan data dari file JSON cadangan akan MENIMPA seluruh stok, transaksi pengiriman, forecast, dan tarif harga di database cloud saat ini. Lanjutkan?',
       confirmLabel: 'Pilih File Cadangan',
       isDestructive: true,
       onConfirm: () => {
@@ -354,31 +491,20 @@ export default function App() {
 
   const handleRestoreFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !currentUser) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const ok = restoreBackupJson(text);
+        const ok = await restoreBackupToFirestore(text, currentUser.uid);
         if (ok) {
-          showToast('Data berhasil dipulihkan! Memuat ulang sistem...');
-          setTimeout(() => {
-            const reloaded = loadStoredData();
-            setProducts(reloaded.products);
-            setStockEntries(reloaded.stockEntries);
-            setSalesData(reloaded.salesData);
-            setUsers(reloaded.users);
-            setForecastData(reloaded.forecastData);
-            setDcToGdMap(reloaded.dcToGdMap);
-            setGudangAllocations(reloaded.gudangAllocations);
-            setHargaPelanggan(reloaded.hargaPelanggan);
-          }, 600);
+          showToast('Data berhasil dipulihkan ke database Firebase secara real-time!');
         } else {
           showToast('File JSON cadangan tidak valid atau rusak.', true);
         }
-      } catch {
-        showToast('Gagal memproses file JSON cadangan.', true);
+      } catch (err: any) {
+        showToast(err?.message || 'Gagal memulihkan data ke database Firebase.', true);
       } finally {
         if (restoreFileInputRef.current) restoreFileInputRef.current.value = '';
       }
@@ -392,15 +518,22 @@ export default function App() {
     year: 'numeric',
   });
 
+  const isAuthorizedActive = currentUser && currentUser.status === 'active';
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased selection:bg-amber-500/20 selection:text-amber-300">
-      {/* Login Screen Overlay when not authenticated */}
-      {!currentUser && (
-        <LoginOverlay users={users} onLoginSuccess={handleLogin} />
+      {/* Login / Auth Loading / Pending Approval Overlay */}
+      {(authLoading || !isAuthorizedActive) && (
+        <LoginOverlay
+          pendingUser={currentUser && currentUser.status === 'pending' ? currentUser : null}
+          authLoading={authLoading}
+          onGoogleLogin={handleGoogleLogin}
+          onLogout={handleLogout}
+        />
       )}
 
-      {/* Main App Layout */}
-      {currentUser && (
+      {/* Main Authenticated App Layout */}
+      {isAuthorizedActive && (
         <>
           <Navbar
             activeTab={activeTab}
@@ -411,113 +544,134 @@ export default function App() {
           />
 
           <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
-            {activeTab === 'dashboard' && (
-              <DashboardView
-                products={products}
-                stockEntries={stockEntries}
-                salesData={salesData}
-                forecastData={forecastData}
-                onNavigateTab={(tab) => setActiveTab(tab)}
-              />
-            )}
+            {dataLoading && products.length === 0 ? (
+              <div className="py-20 flex flex-col items-center justify-center gap-3 text-slate-400">
+                <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                <p className="text-xs">Mengambil data real-time dari Firebase Firestore...</p>
+              </div>
+            ) : (
+              <>
+                {activeTab === 'dashboard' && (
+                  <DashboardView
+                    products={products}
+                    stockEntries={stockEntries}
+                    salesData={salesData}
+                    forecastData={forecastData}
+                    onNavigateTab={(tab) => setActiveTab(tab)}
+                  />
+                )}
 
-            {activeTab === 'stock' && (
-              <StockView
-                products={products}
-                stockEntries={stockEntries}
-                salesData={salesData}
-                currentUser={currentUser}
-                onOpenAddProduct={() => {
-                  setEditingProduct(null);
-                  setIsProductModalOpen(true);
-                }}
-                onOpenEditProduct={(p) => {
-                  setEditingProduct(p);
-                  setIsProductModalOpen(true);
-                }}
-                onDeleteProduct={handleDeleteProduct}
-                onOpenAddStockEntry={() => {
-                  setEditingStockEntry(null);
-                  setIsStockEntryModalOpen(true);
-                }}
-                onOpenEditStockEntry={(entry) => {
-                  setEditingStockEntry(entry);
-                  setIsStockEntryModalOpen(true);
-                }}
-                onDeleteStockEntry={handleDeleteStockEntry}
-                onOpenRecordSale={() => {
-                  setEditingSale(null);
-                  setIsSaleModalOpen(true);
-                }}
-              />
-            )}
+                {activeTab === 'stock' && (
+                  <StockView
+                    products={products}
+                    stockEntries={stockEntries}
+                    salesData={salesData}
+                    currentUser={currentUser}
+                    onOpenAddProduct={() => {
+                      setEditingProduct(null);
+                      setIsProductModalOpen(true);
+                    }}
+                    onOpenEditProduct={(p) => {
+                      setEditingProduct(p);
+                      setIsProductModalOpen(true);
+                    }}
+                    onDeleteProduct={handleDeleteProduct}
+                    onOpenAddStockEntry={() => {
+                      setEditingStockEntry(null);
+                      setIsStockEntryModalOpen(true);
+                    }}
+                    onOpenEditStockEntry={(entry) => {
+                      setEditingStockEntry(entry);
+                      setIsStockEntryModalOpen(true);
+                    }}
+                    onDeleteStockEntry={handleDeleteStockEntry}
+                    onOpenRecordSale={() => {
+                      setEditingSale(null);
+                      setIsSaleModalOpen(true);
+                    }}
+                  />
+                )}
 
-            {activeTab === 'sales' && (
-              <SalesView
-                salesData={salesData}
-                products={products}
-                currentUser={currentUser}
-                onOpenRecordSale={() => {
-                  setEditingSale(null);
-                  setIsSaleModalOpen(true);
-                }}
-                onOpenEditSale={(sale) => {
-                  setEditingSale(sale);
-                  setIsSaleModalOpen(true);
-                }}
-                onDeleteSale={handleDeleteSale}
-                onSalesImported={handleSalesImported}
-              />
-            )}
+                {activeTab === 'sales' && (
+                  <SalesView
+                    salesData={salesData}
+                    products={products}
+                    currentUser={currentUser}
+                    onOpenRecordSale={() => {
+                      setEditingSale(null);
+                      setIsSaleModalOpen(true);
+                    }}
+                    onOpenEditSale={(sale) => {
+                      setEditingSale(sale);
+                      setIsSaleModalOpen(true);
+                    }}
+                    onDeleteSale={handleDeleteSale}
+                    onSalesImported={handleSalesImported}
+                  />
+                )}
 
-            {activeTab === 'forecast' && (
-              <ForecastView
-                products={products}
-                salesData={salesData}
-                forecastData={forecastData}
-                dcToGdMap={dcToGdMap}
-                currentUser={currentUser}
-                onSaveForecast={handleSaveForecast}
-                onToast={showToast}
-              />
-            )}
+                {activeTab === 'forecast' && (
+                  <ForecastView
+                    products={products}
+                    salesData={salesData}
+                    forecastData={forecastData}
+                    dcToGdMap={dcToGdMap}
+                    currentUser={currentUser}
+                    onSaveForecast={handleSaveForecast}
+                    onToast={showToast}
+                  />
+                )}
 
-            {activeTab === 'allocation' && (
-              <AllocationView
-                products={products}
-                allocations={gudangAllocations}
-                forecastData={forecastData}
-                dcToGdMap={dcToGdMap}
-                currentUser={currentUser}
-                onSaveAllocations={handleSaveAllocations}
-                onToast={showToast}
-              />
-            )}
+                {activeTab === 'allocation' && (
+                  <AllocationView
+                    products={products}
+                    allocations={gudangAllocations}
+                    forecastData={forecastData}
+                    dcToGdMap={dcToGdMap}
+                    currentUser={currentUser}
+                    onSaveAllocations={handleSaveAllocations}
+                    onToast={showToast}
+                  />
+                )}
 
-            {activeTab === 'prices' && currentUser.role === 'admin' && (
-              <PricesView
-                products={products}
-                customerPrices={hargaPelanggan}
-                onSavePrices={handleSavePrices}
-                onToast={showToast}
-              />
-            )}
+                {activeTab === 'prices' && currentUser.role === 'admin' && (
+                  <PricesView
+                    products={products}
+                    customerPrices={hargaPelanggan}
+                    onSavePrices={handleSavePrices}
+                    onToast={showToast}
+                  />
+                )}
 
-            {activeTab === 'users' && currentUser.role === 'admin' && (
-              <UsersView
-                users={users}
-                currentUser={currentUser}
-                onAddUser={handleAddUser}
-                onDeleteUser={handleDeleteUser}
-                onRequestRestore={handleRequestRestore}
-                onToast={showToast}
-              />
+                {activeTab === 'users' && currentUser.role === 'admin' && (
+                  <UsersView
+                    users={users}
+                    invites={invites}
+                    currentUser={currentUser}
+                    backupState={{
+                      products,
+                      stockEntries,
+                      salesData,
+                      forecastData,
+                      dcToGdMap,
+                      gudangAllocations,
+                      hargaPelanggan,
+                    }}
+                    onInviteUser={handleInviteUser}
+                    onDeleteInvite={handleDeleteInvite}
+                    onApproveOrUpdateUser={handleApproveOrUpdateUser}
+                    onDeleteUser={handleDeleteUser}
+                    onRequestRestore={handleRequestRestore}
+                    onToast={showToast}
+                  />
+                )}
+              </>
             )}
           </main>
 
           <footer className="no-print mt-auto py-6 border-t border-slate-800/80 text-center text-xs text-slate-500">
             <p>
-              Sistem Manajemen Stok & Pengiriman &middot;{' '}
+              Sistem Manajemen Stok &amp; Pengiriman &middot;{' '}
               <span className="text-amber-400 font-medium">PT Panen Inti Makmur</span>
             </p>
             <p className="mt-1 text-[11px] text-slate-600">

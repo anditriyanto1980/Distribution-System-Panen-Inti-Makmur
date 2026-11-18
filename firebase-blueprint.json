@@ -1,0 +1,337 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and access status for PT Panen Inti Makmur",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 150
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "user"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "pending"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "displayName", "role", "status", "createdAt", "updatedAt"]
+    },
+    "AuthorizedMember": {
+      "title": "AuthorizedMember",
+      "description": "Non-PII membership gate mapping user UID to active workspace role",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "user"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active"]
+        },
+        "inviteId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "role", "status", "createdAt", "updatedAt"]
+    },
+    "Invite": {
+      "title": "Invite",
+      "description": "Admin-issued email invitation granting immediate role activation upon Google sign-in",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 150
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "user"]
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["email", "role", "createdBy", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Master SKU product item stored in Firestore",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "harga": {
+          "type": "number"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["pim-utama"]
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["code", "name", "unit", "harga", "workspaceId", "createdBy", "createdAt", "updatedAt"]
+    },
+    "StockEntry": {
+      "title": "StockEntry",
+      "description": "Warehouse inbound stock receipt entry",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "itemCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]+$"
+        },
+        "warehouse": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["pim-utama"]
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["date", "itemCode", "warehouse", "quantity", "workspaceId", "createdBy", "createdAt", "updatedAt"]
+    },
+    "SaleRecord": {
+      "title": "SaleRecord",
+      "description": "Shipment and sales dispatch transaction record",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "itemCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_\\-]+$"
+        },
+        "quantity": {
+          "type": "number"
+        },
+        "gudang": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "hargaSatuan": {
+          "type": "number"
+        },
+        "totalHarga": {
+          "type": "number"
+        },
+        "namaPelanggan": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "nomorSO": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "nomorSJ": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "keterangan": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "workspaceId": {
+          "type": "string",
+          "enum": ["pim-utama"]
+        },
+        "createdBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "date",
+        "itemCode",
+        "quantity",
+        "gudang",
+        "hargaSatuan",
+        "totalHarga",
+        "namaPelanggan",
+        "nomorSO",
+        "nomorSJ",
+        "keterangan",
+        "workspaceId",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WorkspaceConfig": {
+      "title": "WorkspaceConfig",
+      "description": "Shared operational configuration matrices (forecast, allocation, prices, meta)",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "enum": ["pim-utama"]
+        },
+        "forecastData": {
+          "type": "object"
+        },
+        "dcToGdMap": {
+          "type": "object"
+        },
+        "allocations": {
+          "type": "object"
+        },
+        "prices": {
+          "type": "object"
+        },
+        "seeded": {
+          "type": "boolean"
+        },
+        "updatedBy": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["workspaceId", "updatedBy", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile records with strict PII isolation (owner or admin only)"
+    },
+    "/authorizedMembers/{userId}": {
+      "schema": { "$ref": "#/entities/AuthorizedMember" },
+      "description": "Active workspace member roles without PII"
+    },
+    "/invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/Invite" },
+      "description": "Pre-approved email invitations created by administrators"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Master SKU product definitions synced in real-time"
+    },
+    "/stockEntries/{entryId}": {
+      "schema": { "$ref": "#/entities/StockEntry" },
+      "description": "Inbound stock receipt logs across warehouses"
+    },
+    "/sales/{saleId}": {
+      "schema": { "$ref": "#/entities/SaleRecord" },
+      "description": "Outbound shipment and sales dispatch records"
+    },
+    "/workspaceConfigs/{configId}": {
+      "schema": { "$ref": "#/entities/WorkspaceConfig" },
+      "description": "Real-time forecast, regional allocation, and customer price matrices"
+    }
+  }
+}

@@ -143,7 +143,7 @@ export const parseSalesExcel = async (
   file: File,
   products: Product[],
   existingSales: SaleRecord[]
-): Promise<{ added: number; skipped: number; updatedList: SaleRecord[] }> => {
+): Promise<{ added: number; skipped: number; updatedList: SaleRecord[]; addedItems: SaleRecord[] }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -156,6 +156,7 @@ export const parseSalesExcel = async (
 
         let added = 0;
         let skipped = 0;
+        const addedItems: SaleRecord[] = [];
         const newSales: SaleRecord[] = [...existingSales];
         const productMap = new Map(products.map((p) => [p.code.toUpperCase(), p]));
 
@@ -183,8 +184,8 @@ export const parseSalesExcel = async (
           const unitPrice = parseFloat(row['Harga Satuan'] || product.harga || 0);
           const total = unitPrice * quantity;
 
-          newSales.push({
-            id: `sale-import-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          const itemRecord: SaleRecord = {
+            id: `sale_import_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             itemCode: product.code,
             quantity,
             gudang: warehouse || 'Gudang Jakarta 136',
@@ -195,11 +196,14 @@ export const parseSalesExcel = async (
             nomorSO: (row['No SO'] || row['No PO'] || row['Nomor SO'] || '')?.toString().trim(),
             nomorSJ: (row['No SJ'] || row['Nomor SJ'] || '')?.toString().trim(),
             keterangan: (row['Keterangan'] || row['Catatan'] || '')?.toString().trim(),
-          });
+          };
+
+          addedItems.push(itemRecord);
+          newSales.push(itemRecord);
           added++;
         });
 
-        resolve({ added, skipped, updatedList: newSales });
+        resolve({ added, skipped, updatedList: newSales, addedItems });
       } catch (err) {
         reject(err);
       }

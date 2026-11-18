@@ -108,7 +108,7 @@ export const SalesView: React.FC<SalesViewProps> = ({
 
     try {
       const result = await parseSalesExcel(file, products, salesData);
-      onSalesImported(result.updatedList, result.added, result.skipped);
+      onSalesImported(result.addedItems, result.added, result.skipped);
     } catch (err: any) {
       alert(`Gagal membaca file Excel: ${err?.message || 'Format tidak valid'}`);
     } finally {

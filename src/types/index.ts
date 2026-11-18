@@ -31,15 +31,28 @@ export interface SaleRecord {
 
 export interface User {
   id: string;
+  uid: string;
+  email: string;
+  displayName: string;
   username: string;
-  password?: string;
   role: 'admin' | 'user';
+  status: 'active' | 'pending';
+}
+
+export interface InviteRecord {
+  id: string;
+  email: string;
+  role: 'admin' | 'user';
+  createdBy: string;
 }
 
 export type ForecastData = Record<string, Record<string, number>>; // customer -> item -> qty
 export type DcToGdMap = Record<string, Record<string, string>>; // customer -> item -> gdRegion
 export type GudangAllocations = Record<string, Record<string, number>>; // gdRegion -> item -> qty
 export type HargaPelanggan = Record<string, Record<string, number>>; // customer -> item -> price
+
+export const WORKSPACE_ID = 'pim-utama';
+export const BOOTSTRAPPED_ADMIN_EMAIL = 'triyantoandi80@gmail.com';
 
 export const WAREHOUSES = [
   'Gudang Jakarta 136',

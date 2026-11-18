@@ -1,0 +1,380 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'triyantoandi80@gmail.com';
+    }
+
+    function isAuthorizedMember() {
+      return isVerifiedUser() && (
+        isBootstrappedAdmin() ||
+        (exists(/databases/$(database)/documents/authorizedMembers/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/authorizedMembers/$(request.auth.uid)).data.status == 'active')
+      );
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        isBootstrappedAdmin() ||
+        (exists(/databases/$(database)/documents/authorizedMembers/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/authorizedMembers/$(request.auth.uid)).data.role == 'admin' &&
+         get(/databases/$(database)/documents/authorizedMembers/$(request.auth.uid)).data.status == 'active')
+      );
+    }
+
+    // --- Validation Blueprints ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.role in ['admin', 'user']
+        && data.status in ['active', 'pending']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuthorizedMember(data) {
+      return data.keys().hasAll(['uid', 'role', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'role', 'status', 'inviteId', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.role in ['admin', 'user']
+        && data.status == 'active'
+        && (!('inviteId' in data) || isValidId(data.inviteId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidInvite(data) {
+      return data.keys().hasAll(['email', 'role', 'createdBy', 'createdAt'])
+        && data.keys().hasOnly(['email', 'role', 'createdBy', 'createdAt'])
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 150
+        && data.role in ['admin', 'user']
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['code', 'name', 'unit', 'harga', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['code', 'name', 'unit', 'harga', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 32 && data.code.matches('^[A-Za-z0-9_\\-]+$')
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 150
+        && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 32
+        && data.harga is number && data.harga >= 0
+        && data.workspaceId == 'pim-utama'
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStockEntry(data) {
+      return data.keys().hasAll(['date', 'itemCode', 'warehouse', 'quantity', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['date', 'itemCode', 'warehouse', 'quantity', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 32
+        && data.itemCode is string && data.itemCode.size() >= 1 && data.itemCode.size() <= 32 && data.itemCode.matches('^[A-Za-z0-9_\\-]+$')
+        && data.warehouse is string && data.warehouse.size() >= 1 && data.warehouse.size() <= 64
+        && data.quantity is number && data.quantity >= 0
+        && data.workspaceId == 'pim-utama'
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSaleRecord(data) {
+      return data.keys().hasAll(['date', 'itemCode', 'quantity', 'gudang', 'hargaSatuan', 'totalHarga', 'namaPelanggan', 'nomorSO', 'nomorSJ', 'keterangan', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['date', 'itemCode', 'quantity', 'gudang', 'hargaSatuan', 'totalHarga', 'namaPelanggan', 'nomorSO', 'nomorSJ', 'keterangan', 'workspaceId', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 40
+        && data.itemCode is string && data.itemCode.size() >= 1 && data.itemCode.size() <= 32 && data.itemCode.matches('^[A-Za-z0-9_\\-]+$')
+        && data.quantity is number && data.quantity > 0
+        && data.gudang is string && data.gudang.size() >= 1 && data.gudang.size() <= 64
+        && data.hargaSatuan is number && data.hargaSatuan >= 0
+        && data.totalHarga is number && data.totalHarga >= 0
+        && data.namaPelanggan is string && data.namaPelanggan.size() >= 1 && data.namaPelanggan.size() <= 80
+        && data.nomorSO is string && data.nomorSO.size() <= 64
+        && data.nomorSJ is string && data.nomorSJ.size() <= 64
+        && data.keterangan is string && data.keterangan.size() <= 300
+        && data.workspaceId == 'pim-utama'
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspaceConfig(data) {
+      return data.keys().hasAll(['workspaceId', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['workspaceId', 'forecastData', 'dcToGdMap', 'allocations', 'prices', 'seeded', 'updatedBy', 'updatedAt'])
+        && data.workspaceId == 'pim-utama'
+        && (!('forecastData' in data) || data.forecastData is map)
+        && (!('dcToGdMap' in data) || data.dcToGdMap is map)
+        && (!('allocations' in data) || data.allocations is map)
+        && (!('prices' in data) || data.prices is map)
+        && (!('seeded' in data) || data.seeded is bool)
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // Connection check doc
+    match /test/{docId} {
+      allow get: if isVerifiedUser() && docId == 'connection';
+      allow write: if false;
+    }
+
+    // User profiles (PII isolated to owner or admin)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isVerifiedUser() && (isAdmin() || resource.data.uid == request.auth.uid);
+
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isOwner(userId)
+            && isBootstrappedAdmin()
+            && incoming().role == 'admin'
+            && incoming().status == 'active'
+          ) ||
+          (
+            isOwner(userId)
+            && incoming().email == request.auth.token.email
+            && incoming().role == 'user'
+            && incoming().status == 'pending'
+          ) ||
+          (
+            isOwner(userId)
+            && incoming().email == request.auth.token.email
+            && incoming().status == 'active'
+            && existsAfter(/databases/$(database)/documents/authorizedMembers/$(userId))
+            && getAfter(/databases/$(database)/documents/authorizedMembers/$(userId)).data.role == incoming().role
+          )
+        );
+
+      allow update: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'displayName', 'updatedAt'])) ||
+          (isOwner(userId)
+           && incoming().role == existing().role
+           && incoming().status == existing().status
+           && incoming().email == existing().email
+           && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])) ||
+          (isOwner(userId)
+           && incoming().email == existing().email
+           && incoming().status == 'active'
+           && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'displayName', 'updatedAt'])
+           && existsAfter(/databases/$(database)/documents/authorizedMembers/$(userId))
+           && getAfter(/databases/$(database)/documents/authorizedMembers/$(userId)).data.role == incoming().role)
+        );
+
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    // Non-PII workspace membership records
+    match /authorizedMembers/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isVerifiedUser() && (isAdmin() || resource.data.uid == request.auth.uid);
+
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidAuthorizedMember(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (isOwner(userId) && isBootstrappedAdmin() && incoming().role == 'admin') ||
+          (
+            isOwner(userId)
+            && ('inviteId' in incoming())
+            && exists(/databases/$(database)/documents/invites/$(incoming().inviteId))
+            && get(/databases/$(database)/documents/invites/$(incoming().inviteId)).data.email == request.auth.token.email
+            && incoming().role == get(/databases/$(database)/documents/invites/$(incoming().inviteId)).data.role
+          )
+        );
+
+      allow update: if isValidId(userId)
+        && isAdmin()
+        && isValidAuthorizedMember(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'updatedAt']);
+
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    // Admin invitations
+    match /invites/{inviteId} {
+      allow get: if isValidId(inviteId) && isVerifiedUser() && (
+        isAdmin() ||
+        resource == null ||
+        resource.data.email == request.auth.token.email
+      );
+      allow list: if isAdmin();
+
+      allow create: if isValidId(inviteId)
+        && isAdmin()
+        && isValidInvite(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time;
+
+      allow update: if isValidId(inviteId)
+        && isAdmin()
+        && isValidInvite(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['role']);
+
+      allow delete: if isValidId(inviteId) && (
+        isAdmin() ||
+        (isVerifiedUser() && existing().email == request.auth.token.email)
+      );
+    }
+
+    // Master products
+    match /products/{productId} {
+      allow get: if isValidId(productId) && isAuthorizedMember() && existing().workspaceId == 'pim-utama';
+      allow list: if isAuthorizedMember() && resource.data.workspaceId == 'pim-utama';
+
+      allow create: if isValidId(productId)
+        && isAdmin()
+        && isValidProduct(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(productId)
+        && isAdmin()
+        && isValidProduct(incoming())
+        && incoming().code == existing().code
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'unit', 'harga', 'updatedAt']);
+
+      allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    // Inbound stock entries
+    match /stockEntries/{entryId} {
+      allow get: if isValidId(entryId) && isAuthorizedMember() && existing().workspaceId == 'pim-utama';
+      allow list: if isAuthorizedMember() && resource.data.workspaceId == 'pim-utama';
+
+      allow create: if isValidId(entryId)
+        && isAdmin()
+        && isValidStockEntry(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(entryId)
+        && isAdmin()
+        && isValidStockEntry(incoming())
+        && incoming().itemCode == existing().itemCode
+        && incoming().warehouse == existing().warehouse
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'quantity', 'updatedAt']);
+
+      allow delete: if isValidId(entryId) && isAdmin();
+    }
+
+    // Outbound sales / shipments
+    match /sales/{saleId} {
+      allow get: if isValidId(saleId) && isAuthorizedMember() && existing().workspaceId == 'pim-utama';
+      allow list: if isAuthorizedMember() && resource.data.workspaceId == 'pim-utama';
+
+      allow create: if isValidId(saleId)
+        && isAuthorizedMember()
+        && isValidSaleRecord(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(saleId)
+        && isAdmin()
+        && isValidSaleRecord(incoming())
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'date', 'itemCode', 'quantity', 'gudang', 'hargaSatuan',
+          'totalHarga', 'namaPelanggan', 'nomorSO', 'nomorSJ', 'keterangan', 'updatedAt'
+        ]);
+
+      allow delete: if isValidId(saleId) && isAdmin();
+    }
+
+    // Known-ID workspace config documents (forecast, allocation, prices, meta)
+    match /workspaceConfigs/{configId} {
+      allow get: if isValidId(configId)
+        && configId in ['forecast', 'allocation', 'prices', 'meta']
+        && isAuthorizedMember();
+
+      allow create: if isValidId(configId)
+        && configId in ['forecast', 'allocation', 'prices', 'meta']
+        && isAdmin()
+        && isValidWorkspaceConfig(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(configId)
+        && configId in ['forecast', 'allocation', 'prices', 'meta']
+        && isAdmin()
+        && isValidWorkspaceConfig(incoming())
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'forecastData', 'dcToGdMap', 'allocations', 'prices', 'seeded', 'updatedBy', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+  }
+}
